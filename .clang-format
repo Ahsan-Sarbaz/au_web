@@ -1,1 +1,8 @@
 BasedOnStyle: Microsoft
+
+
+AlignArrayOfStructures : Left
+AllowShortCaseLabelsOnASingleLine: true
+IndentCaseLabels: true
+AllowShortIfStatementsOnASingleLine: true
+PointerAlignment: Left
