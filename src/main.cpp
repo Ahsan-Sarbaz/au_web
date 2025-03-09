@@ -1,18 +1,23 @@
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 
+#include <chrono>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <string_view>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <vector>
 
 constexpr size_t max_connections = 1024;
 constexpr size_t max_buffer_size = 1024;
+constexpr size_t max_request_size = 4 * 1024 * 1024;
 int epoll_fd;
 
 void set_nonblocking(int fd)
@@ -21,42 +26,217 @@ void set_nonblocking(int fd)
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
+struct Header
+{
+    std::string_view name;
+    std::string_view value;
+};
+
+enum class Method
+{
+    OPTIONS,
+    GET,
+    HEAD,
+    POST,
+    PUT,
+    DELETE,
+    TRACE,
+    CONNECT
+};
+
+struct Request
+{
+    std::vector<char> content;
+    std::vector<Header> headers;
+    std::vector<std::string_view> lines;
+    std::string_view path;
+    Method method = Method::GET;
+
+    static Request from_content(const std::vector<char>&& content)
+    {
+        Request request;
+        request.content = content;
+        return request;
+    }
+
+    void parse()
+    {
+        auto start_time = std::chrono::high_resolution_clock::now();
+
+        bool end = false;
+        char* line_start = content.data();
+        char* body = line_start;
+        while (!end)
+        {
+            size_t line_length = 0;
+            char* ptr = line_start;
+
+            while (*ptr != '\n')
+            {
+                line_length++;
+                ptr++;
+                if (*ptr == '\0')
+                {
+                    end = true;
+                    break;
+                }
+            }
+            ptr++;
+
+            if (line_length > 0) lines.emplace_back(std::string_view(line_start, line_length));
+            line_start = ptr;
+
+            if (*ptr == '\r' && *(ptr + 1) == '\n')
+            {
+                end = true;
+                body = ptr + 2;
+            }
+        }
+
+        {
+            auto http_start_line = lines[0];
+            auto ptr = http_start_line.data();
+
+            auto http_method = http_start_line.data();
+            while (*ptr != ' ') ptr++;
+            size_t http_method_length = ptr - http_method;
+            ptr++;
+            auto http_path = ptr;
+            while (*ptr != ' ') ptr++;
+            size_t http_path_length = ptr - http_path;
+            ptr++;
+            auto http_version = ptr;
+            while (*ptr != '\r') ptr++;
+
+            auto http_version_length = ptr - http_version;
+            (void)http_version_length;
+
+            if (http_method_length >= 3 && http_method_length <= 7)
+            {
+                if (http_method[0] == 'G' && http_method[1] == 'E' && http_method[2] == 'T' && http_method[3] == ' ')
+                    method = Method::GET;
+                else if (http_method[0] == 'P' && http_method[1] == 'O' && http_method[2] == 'S' &&
+                         http_method[3] == 'T')
+                    method = Method::POST;
+                else if (http_method[0] == 'P' && http_method[1] == 'U' && http_method[2] == 'T' &&
+                         http_method[3] == ' ')
+                    method = Method::PUT;
+                else if (http_method[0] == 'H' && http_method[1] == 'E' && http_method[2] == 'A' &&
+                         http_method[3] == 'D')
+                    method = Method::HEAD;
+                else if (http_method[0] == 'T' && http_method[1] == 'R' && http_method[2] == 'A' &&
+                         http_method[3] == 'C' && http_method[4] == 'E')
+                    method = Method::TRACE;
+                else if (http_method[0] == 'D' && http_method[1] == 'E' && http_method[2] == 'L' &&
+                         http_method[3] == 'E' && http_method[4] == 'T' && http_method[5] == 'E')
+                    method = Method::DELETE;
+                else if (http_method[0] == 'O' && http_method[1] == 'P' && http_method[2] == 'T' &&
+                         http_method[3] == 'I' && http_method[4] == 'O' && http_method[5] == 'N')
+                    method = Method::OPTIONS;
+                else if (http_method[0] == 'C' && http_method[1] == 'O' && http_method[2] == 'N' &&
+                         http_method[3] == 'N' && http_method[4] == 'E' && http_method[5] == 'C' &&
+                         http_method[6] == 'T')
+                    method = Method::CONNECT;
+            }
+
+            if (http_path_length > 0) path = std::string(http_path, http_path_length);
+        }
+
+        if (lines.size() > 1)
+        {
+            for (size_t i = 1; i < lines.size(); i++)
+            {
+                auto line = lines[i];
+                auto ptr = line.data();
+                auto name_start = ptr;
+                while (*ptr != ':') ptr++;
+                size_t name_length = ptr - name_start;
+                ptr++;
+                auto value_start = ptr;
+                while (*ptr != '\r') ptr++;
+                size_t value_length = ptr - value_start;
+                headers.emplace_back(
+                    Header{std::string_view(name_start, name_length), std::string_view(value_start, value_length)});
+            }
+        }
+
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+        std::cout << "Parsing took: " << duration.count() << "us\n";
+
+        (void)body;
+    }
+
+    void print()
+    {
+        switch (method)
+        {
+            case Method::GET: std::cout << "Method: GET\n"; break;
+            case Method::POST: std::cout << "Method: POST\n"; break;
+            case Method::PUT: std::cout << "Method: PUT\n"; break;
+            case Method::DELETE: std::cout << "Method: DELETE\n"; break;
+            case Method::HEAD: std::cout << "Method: HEAD\n"; break;
+            case Method::CONNECT: std::cout << "Method: CONNECT\n"; break;
+            case Method::OPTIONS: std::cout << "Method: OPTIONS\n"; break;
+            case Method::TRACE: std::cout << "Method: TRACE\n"; break;
+            default: std::cout << "Method: UNKNOWN\n"; break;
+        }
+
+        std::cout << "Path: " << path << "\n";
+        for (auto& header : headers) { std::cout << "Header: " << header.name << ": " << header.value << "\n"; }
+        // std::cout << "Content: " << std::string(content.begin(), content.end()) << "\n";
+    }
+};
+
 struct Connection
 {
     int handle = -1;
-    int bytes_read = 0;
     char* buffer;
 
     bool handle_read()
     {
-        int bytes_read = recv(handle, buffer, max_buffer_size - 1, 0);
-        if (bytes_read == -1)
+        auto start = std::chrono::high_resolution_clock::now();
+        std::vector<char> request_buffer;
+        request_buffer.reserve(max_buffer_size);
+
+        size_t current_request_size = 0;
+
+        int iterations = 0;
+        while (true)
         {
-            if (errno != EAGAIN && errno != EWOULDBLOCK)
+            // get a chunk of the request
+            int bytes_read = recv(handle, buffer, max_buffer_size, 0);
+            if (bytes_read <= 0)
             {
-                std::cerr << "Error reading from client handle" << std::endl;
+                if (bytes_read == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+            }
+
+            current_request_size += bytes_read;
+            // if the request is larger then 4 mb just say, NO!
+            if (current_request_size > max_request_size)
+            {
+                std::cerr << "Request too large" << std::endl;
                 return true; // Indicate to close
             }
-            return false; // No action needed
+
+            request_buffer.insert(request_buffer.end(), buffer, buffer + bytes_read);
+
+            iterations++;
         }
-        else if (bytes_read == 0)
-        {
-            return true; // Client disconnected, indicate to close
-        }
-        else
-        {
-            const char* ok = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
-            ssize_t bytes_written = write(handle, ok, strlen(ok));
-            if (bytes_written == -1)
-            {
-                std::cerr << "Error writing to client" << std::endl;
-            }
-            return true; // Response sent, indicate to close
-        }
+
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+        std::cout << "handle_read took " << duration.count() << "us, " << iterations << " iterations\n";
+
+        Request request = Request::from_content(std::move(request_buffer));
+        request.parse();
+        request.print();
+
+        return true;
     }
 };
 
-int main()
+void start_server()
 {
     int server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket == -1)
@@ -106,10 +286,7 @@ int main()
     }
 
     std::array<Connection, max_connections> connections;
-    for (auto& conn : connections)
-    {
-        conn.buffer = new char[max_buffer_size];
-    }
+    for (auto& conn : connections) { conn.buffer = new char[max_buffer_size]; }
 
     size_t next_connection = 0;
     std::unordered_map<int, size_t> socket_to_connection;
@@ -178,12 +355,12 @@ int main()
                 }
 
                 connection.handle = client_socket;
-                connection.bytes_read = 0;
                 socket_to_connection[client_socket] = selected_connection;
                 next_connection = (selected_connection + 1) % connections.size();
             }
             else
             {
+                auto start = std::chrono::high_resolution_clock::now();
                 int client_socket = events[i].data.fd;
                 if (socket_to_connection.find(client_socket) == socket_to_connection.end())
                 {
@@ -200,9 +377,17 @@ int main()
                     socket_to_connection.erase(connection.handle);
                     connection.handle = -1;
                 }
+
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+                std::cout << "Request took " << duration.count() << "us\n";
             }
         }
     }
+}
 
+int main()
+{
+    start_server();
     return 0;
 }
