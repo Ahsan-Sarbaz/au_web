@@ -5,7 +5,7 @@
 Path Path::from_string(const std::string_view& path)
 {
     Path p;
-    p.whole = std::string(path);
+    p._raw = std::string(path);
     return p;
 }
 
@@ -35,10 +35,10 @@ std::string Path::decode_percent(const std::string_view& encoded)
 
 void Path::parse()
 {
-    if (whole.empty()) return;
+    if (_raw.empty()) return;
 
-    auto start = whole.data();
-    auto end = whole.data() + whole.size();
+    auto start = _raw.data();
+    auto end = _raw.data() + _raw.size();
     if (start[0] == '/') { start++; } // Skip leading /
 
     auto ptr = start;
@@ -69,19 +69,19 @@ void Path::parse()
     {
         if (query_start < end)
             raw_query = std::string_view(query_start, end - query_start);
-        else if (start > whole.data() || whole[0] == '/')
+        else if (start > _raw.data() || _raw[0] == '/')
             raw_segments.push_back(std::string_view(start, end - start));
     }
 
     // Decode all components
-    segments.reserve(raw_segments.size());
-    for (const auto& seg : raw_segments) { segments.push_back(decode_percent(seg)); }
-    if (!raw_query.empty()) query = decode_percent(raw_query);
+    _segments.reserve(raw_segments.size());
+    for (const auto& seg : raw_segments) { _segments.push_back(decode_percent(seg)); }
+    if (!raw_query.empty()) _query = decode_percent(raw_query);
 
-    if (!query.empty()) {
+    if (!_query.empty()) {
         // Parse query parameters
-        auto query_start = query.data();
-        auto query_end = query.data() + query.size();
+        auto query_start = _query.data();
+        auto query_end = _query.data() + _query.size();
         auto ptr = query_start;
         auto seperator = query_start;
 
@@ -92,10 +92,10 @@ void Path::parse()
                 if (seperator >= query_start && ptr > seperator) { // Valid key-value pair
                     std::string key = decode_percent(std::string_view(query_start, seperator - query_start));
                     std::string value = decode_percent(std::string_view(seperator + 1, ptr - seperator - 1));
-                    if (!key.empty()) parameters[key] = value;
+                    if (!key.empty()) _parameters[key] = value;
                 } else if (ptr > query_start) { // Key without value
                     std::string key = decode_percent(std::string_view(query_start, ptr - query_start));
-                    if (!key.empty()) parameters[key] = "";
+                    if (!key.empty()) _parameters[key] = "";
                 }
                 query_start = ptr + 1;
                 seperator = query_start;
@@ -108,10 +108,10 @@ void Path::parse()
             if (seperator >= query_start && ptr > seperator) { // Valid key-value pair
                 std::string key = decode_percent(std::string_view(query_start, seperator - query_start));
                 std::string value = decode_percent(std::string_view(seperator + 1, ptr - seperator - 1));
-                if (!key.empty()) parameters[key] = value;
+                if (!key.empty()) _parameters[key] = value;
             } else { // Key without value
                 std::string key = decode_percent(std::string_view(query_start, ptr - query_start));
-                if (!key.empty()) parameters[key] = "";
+                if (!key.empty()) _parameters[key] = "";
             }
         }
     }
@@ -119,16 +119,16 @@ void Path::parse()
 
 void Path::print() const
 {
-    std::cout << whole << std::endl;
-    if (!segments.empty())
+    std::cout << _raw << std::endl;
+    if (!_segments.empty())
     {
-        std::cout << "Segments: (" << segments.size() << ")\n";
-        for (const auto& segment : segments) { std::cout << segment << std::endl; }
+        std::cout << "Segments: (" << _segments.size() << ")\n";
+        for (const auto& segment : _segments) { std::cout << segment << std::endl; }
     }
-    if (!query.empty())
+    if (!_query.empty())
     {
-        std::cout << "Query: " << query << std::endl;
-        std::cout << "Parameters: (" << parameters.size() << ")\n";
-        for (const auto& [key, value] : parameters) { std::cout << key << ": " << value << std::endl; }
+        std::cout << "Query: " << _query << std::endl;
+        std::cout << "Parameters: (" << _parameters.size() << ")\n";
+        for (const auto& [key, value] : _parameters) { std::cout << key << ": " << value << std::endl; }
     }
 }

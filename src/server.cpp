@@ -1,14 +1,18 @@
 #include "server.hpp"
+#include "request.hpp"
+#include "response.hpp"
+#include "router.hpp"
 
+#include <arpa/inet.h>
+#include <cerrno>
+#include <chrono>
+#include <cstring>
+#include <fcntl.h>
+#include <iostream>
+#include <netinet/in.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <cerrno>
-#include <cstring>
-#include <iostream>
 
 void set_nonblocking(int fd)
 {
@@ -24,7 +28,7 @@ void set_nonblocking(int fd)
     }
 }
 
-Server::Server(int port) : port(port), server_socket(-1)
+Server::Server(int port, Router& router) : port(port), server_socket(-1), epoll_fd(-1), router(router)
 {
 }
 
@@ -162,6 +166,8 @@ void Server::run()
             }
             else
             {
+                auto start = std::chrono::high_resolution_clock::now();
+
                 int client_socket = events[i].data.fd;
                 auto it = socket_to_connection.find(client_socket);
 
@@ -176,7 +182,40 @@ void Server::run()
 
                 bool should_close = false;
 
-                if (events[i].events & EPOLLIN) { should_close = connection.handle_read(); }
+                if (events[i].events & EPOLLIN)
+                {
+                    std::optional<Request> request_opt = connection.handle_request();
+
+                    if (request_opt.has_value())
+                    {
+                        auto& request = request_opt.value();
+
+                        RouteParams params;
+                        auto node = router.find_route(request.method(), request.path().raw(), params);
+
+                        if (node && node->handler)
+                        {
+                            request.set_params(params);
+                            Response response = node->handler(request);
+                            auto http_response = response.to_http_response();
+                            if (send(connection.handle, http_response.data(), http_response.size(), 0) == -1)
+                            {
+                                std::cerr << "Error sending response: " << strerror(errno) << std::endl;
+                            }
+                        }
+                        else
+                        {
+                            const char* response = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found";
+                            if (send(connection.handle, response, strlen(response), 0) == -1)
+                            {
+                                std::cerr << "Error sending response: " << strerror(errno) << std::endl;
+                            }
+                        }
+                    }
+
+                    // NOTE(sarbaz) right now we always close the connections
+                    should_close = true;
+                }
 
                 if (events[i].events & (EPOLLERR | EPOLLHUP)) { should_close = true; }
 
@@ -187,6 +226,10 @@ void Server::run()
                     socket_to_connection.erase(connection.handle);
                     connection.handle = -1;
                 }
+
+                auto end = std::chrono::high_resolution_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+                std::cout << "Request took " << duration.count() << "us" << std::endl;
             }
         }
     }

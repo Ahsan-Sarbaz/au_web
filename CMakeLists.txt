@@ -12,6 +12,9 @@ set (SOURCE
     src/connection.cpp
     src/request.cpp
     src/path.cpp
+    src/router.cpp
+    src/application.cpp
+    src/response.cpp
 )
 
 set (HEADERS 
@@ -19,6 +22,10 @@ set (HEADERS
     include/connection.hpp
     include/path.hpp
     include/server.hpp
+    include/router.hpp
+    include/application.hpp
+    include/response.hpp
+    include/common.hpp
 )
 
 include_directories(include)

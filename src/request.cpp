@@ -10,26 +10,26 @@
 Request Request::from_content(std::vector<char>&& content, size_t header_size)
 {
     Request request;
-    request.content = std::move(content);
-    request.header_size = header_size;
-    request.body = std::span<char>(request.content.data() + header_size, request.content.size() - header_size);
+    request._content = std::move(content);
+    request._header_size = header_size;
+    request._body = std::span<char>(request._content.data() + header_size, request._content.size() - header_size);
     return request;
 }
 
 // this takes around (~3us)
 void Request::parse()
 {
-    if (content.empty())
+    if (_content.empty())
     {
         std::cerr << "Empty request content" << std::endl;
         return;
     }
 
     // Ensure content is null-terminated for safety
-    if (content.back() != '\0') { content.push_back('\0'); }
+    if (_content.back() != '\0') { _content.push_back('\0'); }
 
-    char* data = content.data();
-    char* end = data + header_size;
+    char* data = _content.data();
+    char* end = data + _header_size;
 
     // Parse HTTP headers
     char* line_start = data;
@@ -89,21 +89,22 @@ void Request::parse()
             return;
         }
 
-        path = Path::from_string(std::string_view(path_start, path_end - path_start));
-        path.parse();
+        _path = Path::from_string(std::string_view(path_start, path_end - path_start));
+        _path.parse();
 
         // Parse method (fixed comparison logic)
-        if (method_str == "GET") { method = Method::GET; }
-        else if (method_str == "POST") { method = Method::POST; }
-        else if (method_str == "PUT") { method = Method::PUT; }
-        else if (method_str == "HEAD") { method = Method::HEAD; }
-        else if (method_str == "TRACE") { method = Method::TRACE; }
-        else if (method_str == "DELETE") { method = Method::DELETE; }
-        else if (method_str == "OPTIONS") { method = Method::OPTIONS; }
-        else if (method_str == "CONNECT") { method = Method::CONNECT; }
+        if (method_str == "GET") { _method = Method::GET; }
+        else if (method_str == "POST") { _method = Method::POST; }
+        else if (method_str == "PUT") { _method = Method::PUT; }
+        else if (method_str == "PATCH") { _method = Method::PATCH; }
+        else if (method_str == "HEAD") { _method = Method::HEAD; }
+        else if (method_str == "TRACE") { _method = Method::TRACE; }
+        else if (method_str == "DELETE") { _method = Method::DELETE; }
+        else if (method_str == "OPTIONS") { _method = Method::OPTIONS; }
+        else if (method_str == "CONNECT") { _method = Method::CONNECT; }
         else
         {
-            method = Method::UNKNOWN;
+            _method = Method::UNKNOWN;
             std::cerr << "Unknown HTTP method: " << method_str << std::endl;
         }
     }
@@ -131,27 +132,18 @@ void Request::parse()
 
         std::string_view value(value_start, line_end - value_start);
 
-        headers[name] = value;
+        _headers[name] = value;
     }
-}
-
-std::string Request::create_response() const
-{
-    std::string response = "HTTP/1.1 200 OK\r\n";
-    response += "Content-Type: text/plain\r\n";
-    response += "Connection: close\r\n";
-    response += "\r\n";
-    response += "Hello, World!";
-    return response;
 }
 
 void Request::print() const
 {
-    switch (method)
+    switch (_method)
     {
         case Method::GET: std::cout << "Method: GET\n"; break;
         case Method::POST: std::cout << "Method: POST\n"; break;
         case Method::PUT: std::cout << "Method: PUT\n"; break;
+        case Method::PATCH: std::cout << "Method: PATCH\n"; break;
         case Method::DELETE: std::cout << "Method: DELETE\n"; break;
         case Method::HEAD: std::cout << "Method: HEAD\n"; break;
         case Method::CONNECT: std::cout << "Method: CONNECT\n"; break;
@@ -160,6 +152,6 @@ void Request::print() const
         default: std::cout << "Method: UNKNOWN\n"; break;
     }
 
-    path.print();
-    for (const auto& header : headers) { std::cout << "Header: " << header.first << ": " << header.second << "\n"; }
+    _path.print();
+    for (const auto& header : _headers) { std::cout << "Header: " << header.first << ": " << header.second << "\n"; }
 }
