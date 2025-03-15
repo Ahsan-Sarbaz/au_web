@@ -1,7 +1,8 @@
 #include "connection.hpp"
 #include "request.hpp"
 
-#include <chrono>
+#include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <iostream>
 #include <sys/socket.h>
@@ -14,8 +15,6 @@ Connection::Connection() : buffer(max_buffer_size)
 
 bool Connection::handle_read()
 {
-    auto start = std::chrono::high_resolution_clock::now();
-
     if (!request_in_progress)
     {
         request_data.clear();
@@ -24,8 +23,6 @@ bool Connection::handle_read()
     }
 
     size_t current_request_size = request_data.size();
-    int iterations = 0;
-    bool request_completed = false;
 
     while (true)
     {
@@ -41,7 +38,6 @@ bool Connection::handle_read()
             }
             else if (errno == EAGAIN || errno == EWOULDBLOCK)
             {
-                // No more data available right now
                 break;
             }
             else
@@ -62,27 +58,24 @@ bool Connection::handle_read()
 
         // Append data to request buffer
         request_data.insert(request_data.end(), buffer.data(), buffer.data() + bytes_read);
-        iterations++;
-
-        // Create a temporary request object to check if the request is complete
-        Request temp_request = Request::from_content(std::vector<char>(request_data));
-        if (temp_request.check_complete())
-        {
-            request_completed = true;
-            break;
-        }
     }
 
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    std::cout << "handle_read took " << duration.count() << "us, " << iterations << " iterations\n";
+    static const char pattern[] = "\r\n\r\n";
+    auto it = std::search(request_data.begin(), request_data.end(), pattern, pattern + 4);    
+    bool is_complete_request = false;
+    if ((it != request_data.end()))
+    {
+        is_complete_request = true;
+    }
 
     // Only process complete requests
-    if (request_completed)
+    if (is_complete_request)
     {
-        Request request = Request::from_content(std::move(request_data));
+        auto header_end = it + 4;
+        size_t header_size = header_end - request_data.begin();
+        Request request = Request::from_content(std::move(request_data), header_size);
         request.parse();
-        request.print();
+        // request.print();
 
         // Send response
         std::string response = request.create_response();
@@ -93,6 +86,8 @@ bool Connection::handle_read()
 
         request_in_progress = false;
         return true; // Close connection after response (HTTP/1.0 behavior)
+    } else {
+        std::cout << "Request not completed" << std::endl;
     }
 
     return false; // Keep connection open, waiting for more data

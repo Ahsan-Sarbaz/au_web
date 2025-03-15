@@ -7,7 +7,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cerrno>
-#include <chrono>
 #include <cstring>
 #include <iostream>
 
@@ -163,7 +162,6 @@ void Server::run()
             }
             else
             {
-                auto start = std::chrono::high_resolution_clock::now();
                 int client_socket = events[i].data.fd;
                 auto it = socket_to_connection.find(client_socket);
 
@@ -189,10 +187,6 @@ void Server::run()
                     socket_to_connection.erase(connection.handle);
                     connection.handle = -1;
                 }
-
-                auto end = std::chrono::high_resolution_clock::now();
-                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-                std::cout << "Request took " << duration.count() << "us\n";
             }
         }
     }

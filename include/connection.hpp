@@ -2,7 +2,7 @@
 
 #include <vector>
 
-constexpr size_t max_buffer_size = 1024;
+constexpr size_t max_buffer_size = 1024 * 4;
 
 class Connection
 {

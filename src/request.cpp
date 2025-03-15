@@ -1,30 +1,24 @@
 #include "request.hpp"
 #include "path.hpp"
 #include <algorithm>
-#include <chrono>
+#include <cstddef>
 #include <iostream>
+#include <span>
 #include <string_view>
 #include <vector>
 
-Request Request::from_content(std::vector<char>&& content)
+Request Request::from_content(std::vector<char>&& content, size_t header_size)
 {
     Request request;
     request.content = std::move(content);
+    request.header_size = header_size;
+    request.body = std::span<char>(request.content.data() + header_size, request.content.size() - header_size);
     return request;
-}
-
-bool Request::check_complete()
-{
-    static const char pattern[] = "\r\n\r\n";
-    auto it = std::search(content.begin(), content.end(), pattern, pattern + 4);
-    return it != content.end();
 }
 
 // this takes around (~3us)
 void Request::parse()
 {
-    auto start_time = std::chrono::high_resolution_clock::now();
-
     if (content.empty())
     {
         std::cerr << "Empty request content" << std::endl;
@@ -35,13 +29,13 @@ void Request::parse()
     if (content.back() != '\0') { content.push_back('\0'); }
 
     char* data = content.data();
-    char* end = data + content.size() - 1; // Exclude the null terminator
+    char* end = data + header_size;
 
     // Parse HTTP headers
     char* line_start = data;
     char* ptr = data;
 
-    auto a = std::chrono::high_resolution_clock::now();
+    std::vector<std::string_view> lines;
 
     // Parse request lines (takes around ~1us)
     while (ptr < end - 1)
@@ -69,12 +63,6 @@ void Request::parse()
         std::cerr << "No request lines found" << std::endl;
         return;
     }
-
-    auto b = std::chrono::high_resolution_clock::now();
-    auto _duration = std::chrono::duration_cast<std::chrono::nanoseconds>(b - a);
-    std::cerr << "Parse request lines: " << _duration.count() << " ns" << std::endl;
-
-    a = std::chrono::high_resolution_clock::now();
 
     // Parse the first line (HTTP request line)
     {
@@ -120,12 +108,6 @@ void Request::parse()
         }
     }
 
-    b = std::chrono::high_resolution_clock::now();
-    _duration = std::chrono::duration_cast<std::chrono::nanoseconds>(b - a);
-    std::cerr << "Parse request line: " << _duration.count() << " ns" << std::endl;
-
-    a = std::chrono::high_resolution_clock::now();
-
     // Parse headers
     for (size_t i = 1; i < lines.size(); i++)
     {
@@ -148,16 +130,9 @@ void Request::parse()
         while (value_start < line_end && (*value_start == ' ' || *value_start == '\t')) { value_start++; }
 
         std::string_view value(value_start, line_end - value_start);
-        headers.emplace_back(Header{name, value});
+
+        headers[name] = value;
     }
-
-    b = std::chrono::high_resolution_clock::now();
-    _duration = std::chrono::duration_cast<std::chrono::nanoseconds>(b - a);
-    std::cerr << "Parse headers: " << _duration.count() << " ns" << std::endl;
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time);
-    std::cout << "Total Parsing took: " << duration.count() << "ns\n";
 }
 
 std::string Request::create_response() const
@@ -186,5 +161,5 @@ void Request::print() const
     }
 
     path.print();
-    for (const auto& header : headers) { std::cout << "Header: " << header.name << ": " << header.value << "\n"; }
+    for (const auto& header : headers) { std::cout << "Header: " << header.first << ": " << header.second << "\n"; }
 }
